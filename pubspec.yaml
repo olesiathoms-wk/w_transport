@@ -17,7 +17,15 @@ authors:
   - Trent Grover <trent.grover@workiva.com>
 
 environment:
-  sdk: '>=1.24.3 <3.0.0'
+  sdk: '>=2.3.0 <3.0.0'
+
+dependency_overrides:
+  build_runner:
+    path:
+      ../build/build_runner
+  dart_dev:
+    path:
+      ../dart_dev_v3
 
 dependencies:
   dart2_constant: ^1.0.1

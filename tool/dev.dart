@@ -13,97 +13,115 @@
 // limitations under the License.
 
 import 'dart:async';
-import 'dart:io' as io;
+import 'dart:convert';
+import 'dart:io';
 
-import 'package:dart_dev/dart_dev.dart' show dev, config;
-import 'package:dart_dev/util.dart' show TaskProcess, reporter;
+// import 'package:dart_dev/dart_dev.dart' show dev, config;
+// import 'package:dart_dev/util.dart' show TaskProcess, reporter;
+import 'package:args/command_runner.dart';
+import 'package:dart_dev/configs/workiva.dart' as workiva_ddev_config;
+import 'package:dart_dev/commands/dart_function_command.dart';
+import 'package:dart_dev/commands/sequence_command.dart';
+import 'package:dart_dev/commands/test_command.dart';
+import 'package:dart_dev/command_utils.dart';
+import 'package:logging/logging.dart';
 
 import 'server/server.dart' show Server;
 
-Future<Null> main(List<String> args) async {
-  // https://github.com/Workiva/dart_dev
+List<Command<int>> get config => [
+  ...workiva_ddev_config.build(
+    // Rename the default test command to `_test` so that we can provide a
+    // custom `test` command that starts the test servers first.
+    testConfig: TestConfig(commandName: '_test', hidden: true),
+  ),
 
-  final directories = <String>['example/', 'lib/', 'test/', 'tool/'];
+  // Configure the test commands.
+  TestCommand(
+    TestConfig(
+      commandName: 'test_unit',
+      description: 'Run only the Dart unit tests.',
+      testArgs: ['-P', 'unit'],
+    ),
+  ),
+  TestCommand(
+    TestConfig(
+      commandName: '_test_integration',
+      hidden: true,
+      testArgs: ['-P', 'integration'],
+    ),
+  ),
+  SequenceCommand(
+    SequenceConfig(
+      commandName: 'test_integration',
+      description: 'Run only the Dart integration tests.',
+      beforeCommands: [['test_server_start']],
+      primaryCommands: [['_test_integration']],
+      afterCommands: [['test_server_stop']],
+    ),
+  ),
+  SequenceCommand(
+    SequenceConfig(
+      commandName: 'test',
+      description: TestConfig.defaultDescription,
+      primaryCommands: [['test_unit'], ['test_integration']],
+    ),
+  ),
+  DartFunctionCommand(
+    DartFunctionConfig(
+      commandName: 'test_server_start',
+      description: 'Starts the HTTP/WebSocket server for network tests.',
+      function: startTestServers,
+    ),
+  ),
+  DartFunctionCommand(
+    DartFunctionConfig(
+      commandName: 'test_server_stop',
+      description: 'Starts the HTTP/WebSocket server for network tests.',
+      function: stopTestServers,
+      hidden: true,
+    ),
+  ),
 
-  config.analyze.entryPoints = [
-    'lib/',
-    'test/',
-    'test/unit/',
-    'test/integration/',
-    'tool/',
-    'tool/server/'
-  ];
+  // TODO: serve command for examples
+  // TODO: copy-license
+];
 
-  config.copyLicense.directories = directories;
+Server _dartTestServer;
+final  _dartTestServerLog = Logger('TestServer');
+Process _sockjsTestServer;
+final _sockjsTestServerLog = Logger('SockjsServer');
 
-  config.coverage
-    ..pubServe = true
-    ..reportOn = ['lib/']
-    ..before = [_streamServer, _streamSockJSServer]
-    ..after = [_stopServer, _stopSockJSServer];
-
-  config.format.paths = directories;
-
-  config.test
-    ..platforms = ['vm', 'chrome']
-    ..pubServe = true
-    ..before = [_streamServer, _streamSockJSServer]
-    ..after = [_stopServer, _stopSockJSServer];
-
-  await dev(args);
-}
-
-/// Server needed for integration tests and examples.
-Server _server;
-
-/// SockJS Server needed for integration tests.
-TaskProcess _sockJSServer;
-
-/// Output from the server (only used if caching the output to dump at the end).
-List<String> _serverOutput;
-
-/// Output from the SockJS server.
-List<String> _sockJSServerOutput;
-
-/// Start the server needed for integration tests and examples and stream the
-/// server output as it arrives. The output will be mixed in with output from
-/// whichever task is running.
-Future<Null> _streamServer() async {
-  _server = new Server();
-  _server.output.listen((line) {
-    reporter.log(reporter.colorBlue('    $line'));
+Future<int> startTestServers() async {
+  await logTimedAsync(_dartTestServerLog, 'Starting HTTP/WS test server', () async {
+    _dartTestServer = new Server();
+    _dartTestServer.output.listen(_dartTestServerLog.fine);
+    await _dartTestServer.start();
   });
-  await _server.start();
-}
 
-Future<Null> _streamSockJSServer() async {
-  _sockJSServer = new TaskProcess('node', ['tool/server/sockjs.js']);
-  _sockJSServer.stdout.listen((line) {
-    reporter.log(reporter.colorBlue('    $line'));
+  await logTimedAsync(_sockjsTestServerLog, 'Starting SockJS test server', () async {
+      _sockjsTestServer = await Process.start(
+      'node', ['tool/server/sockjs.js'], mode: ProcessStartMode.detachedWithStdio);
+    _sockjsTestServer.stdout
+      .transform(utf8.decoder)
+      .transform(LineSplitter())
+      .listen(_sockjsTestServerLog.fine);
+    _sockjsTestServer.stderr
+      .transform(utf8.decoder)
+      .transform(LineSplitter())
+      .listen(_sockjsTestServerLog.fine);
   });
-  _sockJSServer.stderr.listen((line) {
-    reporter.log(reporter.colorBlue('    $line'));
-  });
-  // todo: wait for server to start
+
+  // Wait a short amount of time to prevent the servers from missing anything.
+  await Future.delayed(Duration(milliseconds: 500));
+
+  return 0;
 }
 
-/// Stop the server needed for integration tests and examples.
-Future<Null> _stopServer() async {
-  if (_serverOutput != null) {
-    reporter.logGroup('HTTP Server Logs',
-        output: '    ${_serverOutput.join('\n')}');
-  }
-  await _server.stop();
-}
+Future<int> stopTestServers() async {
+  _sockjsTestServer?.kill();
+  _sockjsTestServer = null;
+  await _dartTestServer?.stop();
+  _dartTestServer  = null;
 
-Future<Null> _stopSockJSServer() async {
-  if (_sockJSServerOutput != null) {
-    reporter.logGroup('SockJS Server Logs',
-        output: '    ${_sockJSServerOutput.join('\n')}');
-  }
-  if (_sockJSServer != null) {
-    try {
-      _sockJSServer.kill();
-    } catch (_) {}
-  }
+  return 0;
 }

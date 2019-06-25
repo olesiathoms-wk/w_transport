@@ -24,12 +24,19 @@ platforms:
   - chrome
   - vm
 
-# The SockJS integration test server sometimes gets overloaded and rejects
-# connections. To mitigate this, retries are enabled and concurrency set to 1.
-retry: 3
-concurrency: 1
-
 presets:
+  unit:
+    paths:
+      - test/unit/
+
+  integration:
+    paths:
+      - test/integration/
+    concurrency: 1
+    # The SockJS integration test server sometimes gets overloaded and rejects
+    # connections. To mitigate this, retries are enabled and concurrency set to 1.
+    retry: 3
+
   dart2:
     exclude_tags: "no-dart2"
 
