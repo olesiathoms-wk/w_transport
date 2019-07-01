@@ -16,12 +16,8 @@
 
 To serve the examples:
 
-Dart 1:
-
 ```bash
-pub serve
+ddev serve
 ```
-
-Dart 2: TBD
 
 Then open [http://localhost:8080](http://localhost:8080) in Dartium or your browser of choice.
